@@ -1,4 +1,23 @@
 {
+  "debounce": {
+    "description": "消息防抖（合并连发）",
+    "type": "object",
+    "hint": "同一会话连续几条消息会先攒一攒，合并成一条再处理。避免你还在打第二条，她就已经回复第一条了。",
+    "items": {
+      "enable": {
+        "description": "启用消息防抖",
+        "type": "bool",
+        "hint": "关闭后每条消息都会立刻单独处理",
+        "default": true
+      },
+      "listen_seconds": {
+        "description": "等待时长（秒）",
+        "type": "float",
+        "hint": "收到一条消息后先等这么久，期间又有新消息就继续等。建议 2-4 秒。0 表示关闭",
+        "default": 2.5
+      }
+    }
+  },
   "silence": {
     "description": "已读不回",
     "type": "object",

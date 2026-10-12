@@ -1,13 +1,14 @@
-"""真人节奏 —— 让 Bot 不再秒回、不再逢消息必答。
+"""真人节奏 —— 让 Bot 不再秒回、不再逢消息必答、不再打断你打字。
 
-三项独立行为，各自可开关：
+四项独立行为，各自可开关：
 
-1. 已读不回 —— 收到纯图片消息（表情包）时按概率直接终止事件，不调用模型也不回复。
+1. 消息防抖 —— 同一会话连续几条消息合并成一条再处理，避免你还在打字她就回复了。
+2. 已读不回 —— 收到纯图片消息（表情包）时按概率直接终止事件，不调用模型也不回复。
    只对不含文字的消息生效；图片配文字的照常回复。
-2. 打字延迟 —— 回复发出前按正文长度计算随机停顿，避免秒回。
-3. 正在输入 —— 停顿期间向平台发送「正在输入」状态，让等待可见。
+3. 打字延迟 —— 回复发出前按正文长度计算随机停顿，避免秒回。
+4. 正在输入 —— 停顿期间向平台发送「正在输入」状态，让等待可见。
 
-事件终止用 ``event.stop_event()``；停顿用 ``asyncio.sleep``，不阻塞事件循环。
+事件终止用 ``event.stop_event()``；等待用 ``asyncio.sleep``，不阻塞事件循环。
 """
 
 import asyncio
@@ -32,6 +33,7 @@ _INPUT_STOP = 2
 
 # 默认值，与 _conf_schema.json 保持一致
 _DEFAULTS = {
+    "debounce": {"enable": True, "listen_seconds": 2.5},
     "silence": {"enable": True, "probability": 45, "cooldown_seconds": 90},
     "delay": {
         "enable": True,
@@ -55,15 +57,23 @@ def _subscribed_message_types() -> EventMessageType:
         return EventMessageType.PRIVATE_MESSAGE
 
 
-@register("humanlike_pace", "sijin14514-sys", "真人节奏：已读不回、打字延迟与正在输入", "1.1.0")
+@register(
+    "humanlike_pace",
+    "sijin14514-sys",
+    "真人节奏：消息防抖、已读不回、打字延迟与正在输入",
+    "1.2.0",
+)
 class HumanlikePace(Star):
-    """控制是否回复、回复前停顿多久，以及停顿期间是否显示正在输入。"""
+    """控制什么时候回复、回复前停顿多久，以及怎样不打断你打字。"""
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
         self.config = config if config is not None else {}
         self._last_silence_at = 0.0
         self._typing_warned = False
+        # 防抖：会话 -> 最新事件 / 待合并批次
+        self._latest_event: dict[str, AstrMessageEvent] = {}
+        self._batch: dict[str, list[AstrMessageEvent]] = {}
 
     # ------------------------------------------------------------------ 配置
 
@@ -89,6 +99,69 @@ class HumanlikePace(Star):
     def _flag(self, section: str, key: str) -> bool:
         """取一个布尔配置。"""
         return bool(self._value(section, key))
+
+    # -------------------------------------------------------------- 消息防抖
+
+    @filter.event_message_type(_subscribed_message_types(), priority=200)
+    async def debounce_messages(self, event: AstrMessageEvent) -> None:
+        """把同一会话连续到达的几条消息合并成一条再交给后续流程。
+
+        最新的一条负责等待、合并与继续处理；等待期间被合并的旧事件在此处终止，
+        因此不会各自触发一次模型调用。
+        """
+        if not self._flag("debounce", "enable"):
+            return
+        window = self._number("debounce", "listen_seconds")
+        if window <= 0:
+            return
+
+        umo = event.unified_msg_origin
+        self._latest_event[umo] = event
+        self._batch.setdefault(umo, []).append(event)
+
+        await asyncio.sleep(window)
+
+        # 等待期间又有新消息 => 本条让位，由更新的那条统一处理
+        if self._latest_event.get(umo) is not event:
+            event.stop_event()
+            return
+
+        batch = self._batch.pop(umo, [])
+        self._latest_event.pop(umo, None)
+        if len(batch) <= 1:
+            return
+
+        self._merge_events(event, batch)
+        logger.info(
+            "[humanlike_pace] 已合并 %s 条连续消息（%s）",
+            len(batch), umo,
+        )
+
+    @staticmethod
+    def _merge_events(target: AstrMessageEvent, batch: list[AstrMessageEvent]) -> None:
+        """把批次里的消息文本与消息链合并进 target。"""
+        texts: list[str] = []
+        chain: list = []
+        for item in batch:
+            text = str(getattr(item, "message_str", "") or "").strip()
+            if text:
+                texts.append(text)
+            components = list(getattr(item.message_obj, "message", None) or [])
+            if components and chain:
+                try:
+                    chain.append(Plain("\n"))
+                except Exception:
+                    pass
+            chain.extend(components)
+
+        merged = "\n".join(texts)
+        target.message_str = merged
+        try:
+            target.message_obj.message_str = merged
+        except Exception:
+            pass
+        if chain:
+            target.message_obj.message = chain
 
     # -------------------------------------------------------------- 已读不回
 
