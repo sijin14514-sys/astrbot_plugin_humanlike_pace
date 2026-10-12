@@ -1,0 +1,64 @@
+{
+  "silence": {
+    "description": "已读不回",
+    "type": "object",
+    "hint": "收到纯图片消息（表情包）时，按概率直接不回复。只对不含文字的消息生效，图片配文字的照常回复。",
+    "items": {
+      "enable": {
+        "description": "启用已读不回",
+        "type": "bool",
+        "hint": "关闭后所有消息都会正常回复",
+        "default": true
+      },
+      "probability": {
+        "description": "不回复的概率（%）",
+        "type": "int",
+        "hint": "收到纯图片消息时有多大概率不理。0 = 永远回，100 = 永远不回。建议 30-50",
+        "default": 45
+      },
+      "cooldown_seconds": {
+        "description": "两次沉默的最小间隔（秒）",
+        "type": "int",
+        "hint": "防止连续多次不理人。0 表示不限制",
+        "default": 90
+      }
+    }
+  },
+  "delay": {
+    "description": "打字延迟",
+    "type": "object",
+    "hint": "回复发送前的随机停顿，长度越长停得越久。",
+    "items": {
+      "enable": {
+        "description": "启用打字延迟",
+        "type": "bool",
+        "hint": "关闭后回复会立刻发出",
+        "default": true
+      },
+      "base_seconds": {
+        "description": "基础停顿（秒）",
+        "type": "float",
+        "hint": "每条回复至少停顿这么久，模拟看到消息到开始打字",
+        "default": 1.0
+      },
+      "per_char_seconds": {
+        "description": "每字额外停顿（秒）",
+        "type": "float",
+        "hint": "正文每多一个字增加的停顿。0.05 表示 20 字多停 1 秒",
+        "default": 0.05
+      },
+      "jitter_seconds": {
+        "description": "随机抖动上限（秒）",
+        "type": "float",
+        "hint": "在 0 到这个值之间随机追加，避免每次都一样",
+        "default": 0.8
+      },
+      "max_seconds": {
+        "description": "停顿上限（秒）",
+        "type": "float",
+        "hint": "再长也不超过这个时间，防止把回复卡住",
+        "default": 6.0
+      }
+    }
+  }
+}
