@@ -60,5 +60,24 @@
         "default": 6.0
       }
     }
+  },
+  "typing": {
+    "description": "正在输入",
+    "type": "object",
+    "hint": "停顿期间向平台发送「正在输入」状态，让等待可见。依赖协议端实现 OneBot v11 的 set_input_status 扩展动作（NapCat 等），且只支持私聊；平台不支持时自动跳过，不影响回复。",
+    "items": {
+      "enable": {
+        "description": "启用正在输入",
+        "type": "bool",
+        "hint": "关闭后只做静默停顿，不发送输入状态",
+        "default": true
+      },
+      "min_seconds": {
+        "description": "触发所需的最短停顿（秒）",
+        "type": "float",
+        "hint": "停顿短于这个值时不显示正在输入，避免闪一下就消失",
+        "default": 0.6
+      }
+    }
   }
 }

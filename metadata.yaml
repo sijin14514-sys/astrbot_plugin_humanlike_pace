@@ -1,9 +1,9 @@
 name: humanlike_pace
 display_name: 真人节奏
-short_desc: 已读不回与打字延迟
+short_desc: 已读不回、打字延迟与正在输入
 desc: >-
   让 Bot 不再秒回、不再逢消息必答。收到纯图片消息（表情包）时按概率直接不回复；
-  回复发送前按正文长度计算随机停顿。两项行为各自可开关。
+  回复发送前按正文长度计算随机停顿，停顿期间显示「正在输入」。三项行为各自可开关。
 help: |-
   全部配置都在插件设置页，改完重载插件生效。
 
@@ -11,7 +11,10 @@ help: |-
   概率设 0 等于关闭，设 100 等于永远不理。冷却时间防止连续多次不回复。
 
   【打字延迟】停顿 = 基础停顿 + 正文字数 × 每字停顿 + 随机抖动，再按上限截断。
-version: 1.0.0
+
+  【正在输入】停顿期间向平台发送输入状态。依赖协议端实现 OneBot v11 的
+  set_input_status 扩展动作（NapCat 等），且只支持私聊；平台不支持时自动跳过。
+version: 1.1.0
 author: sijin14514-sys
 repo: https://github.com/sijin14514-sys/astrbot_plugin_humanlike_pace
 astrbot_version: ">=4.24.0"
@@ -19,4 +22,5 @@ tags:
   - 拟人
   - 已读不回
   - 打字延迟
+  - 正在输入
   - 回复控制

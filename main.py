@@ -1,14 +1,13 @@
 """真人节奏 —— 让 Bot 不再秒回、不再逢消息必答。
 
-两项独立行为，各自可开关：
+三项独立行为，各自可开关：
 
 1. 已读不回 —— 收到纯图片消息（表情包）时按概率直接终止事件，不调用模型也不回复。
    只对不含文字的消息生效；图片配文字的照常回复。
 2. 打字延迟 —— 回复发出前按正文长度计算随机停顿，避免秒回。
+3. 正在输入 —— 停顿期间向平台发送「正在输入」状态，让等待可见。
 
 事件终止用 ``event.stop_event()``；停顿用 ``asyncio.sleep``，不阻塞事件循环。
-已读不回的处理器优先级刻意设得很高（尽早终止，省下一次模型调用），
-打字延迟则排在最后（等其它插件改写完消息链再统计长度）。
 """
 
 import asyncio
@@ -27,6 +26,10 @@ _MEME_TAG = re.compile(r"&&[^&\r\n]{1,100}&&")
 # 统计长度时的上限，防止超长正文把延迟算到离谱
 _MAX_COUNTED_CHARS = 400
 
+# OneBot 扩展动作 set_input_status 的取值
+_INPUT_START = 1
+_INPUT_STOP = 2
+
 # 默认值，与 _conf_schema.json 保持一致
 _DEFAULTS = {
     "silence": {"enable": True, "probability": 45, "cooldown_seconds": 90},
@@ -37,6 +40,7 @@ _DEFAULTS = {
         "jitter_seconds": 0.8,
         "max_seconds": 6.0,
     },
+    "typing": {"enable": True, "min_seconds": 0.6},
 }
 
 
@@ -51,14 +55,15 @@ def _subscribed_message_types() -> EventMessageType:
         return EventMessageType.PRIVATE_MESSAGE
 
 
-@register("humanlike_pace", "sijin14514-sys", "真人节奏：已读不回与打字延迟", "1.0.0")
+@register("humanlike_pace", "sijin14514-sys", "真人节奏：已读不回、打字延迟与正在输入", "1.1.0")
 class HumanlikePace(Star):
-    """控制是否回复，以及回复前停顿多久。"""
+    """控制是否回复、回复前停顿多久，以及停顿期间是否显示正在输入。"""
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
         self.config = config if config is not None else {}
         self._last_silence_at = 0.0
+        self._typing_warned = False
 
     # ------------------------------------------------------------------ 配置
 
@@ -128,11 +133,44 @@ class HumanlikePace(Star):
                     return False
         return has_image
 
-    # -------------------------------------------------------------- 打字延迟
+    # -------------------------------------------------------- 正在输入与延迟
+
+    async def _set_typing(self, event: AstrMessageEvent, typing: bool) -> None:
+        """向平台发送「正在输入」状态。
+
+        走 OneBot v11 的扩展动作 ``set_input_status``（NapCat 等协议端实现）。
+        该动作只支持私聊。平台不实现时静默跳过，不影响回复本身。
+        """
+        if not self._flag("typing", "enable"):
+            return
+        try:
+            if not event.is_private_chat():
+                return
+        except Exception:
+            return
+
+        bot = getattr(event, "bot", None)
+        call_action = getattr(bot, "call_action", None)
+        if call_action is None:
+            return
+
+        try:
+            await call_action(
+                "set_input_status",
+                user_id=str(event.get_sender_id()),
+                event_type=_INPUT_START if typing else _INPUT_STOP,
+            )
+        except Exception as exc:
+            # 只在首次失败时提示一次，避免刷屏
+            if not self._typing_warned:
+                self._typing_warned = True
+                logger.info(
+                    "[humanlike_pace] 平台不支持设置输入状态，已跳过：%s", exc,
+                )
 
     @filter.on_decorating_result(priority=-100)
     async def delay_before_send(self, event: AstrMessageEvent) -> None:
-        """按正文长度在发送前停顿。"""
+        """按正文长度在发送前停顿，停顿期间显示正在输入。"""
         if not self._flag("delay", "enable"):
             return
 
@@ -160,4 +198,12 @@ class HumanlikePace(Star):
             return
 
         logger.debug("[humanlike_pace] 停顿 %.2f 秒（正文 %d 字）", seconds, length)
-        await asyncio.sleep(seconds)
+
+        show_typing = seconds >= self._number("typing", "min_seconds")
+        if show_typing:
+            await self._set_typing(event, True)
+        try:
+            await asyncio.sleep(seconds)
+        finally:
+            if show_typing:
+                await self._set_typing(event, False)

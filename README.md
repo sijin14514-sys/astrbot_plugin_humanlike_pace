@@ -4,9 +4,11 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.0-orange.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 
+![演示](demo.gif)
+
 让 Bot 不再秒回、不再逢消息必答。
 
-真人聊天有两个机器人不会有的习惯：**收到表情包有时候根本不回**，以及**回之前会停一下**。这个插件补上这两点。
+真人聊天有三个机器人不会有的习惯：**收到表情包有时候根本不回**、**回之前会停一下**、**停的时候对方能看到"正在输入"**。这个插件把这三件事补上。
 
 ## 功能
 
@@ -27,6 +29,15 @@
 ```
 
 默认参数下，10 个字的回复大约停 1.8~2.6 秒，30 个字大约 2.9~3.7 秒。纯表情包回复也会停一小下，避免同步发出。
+
+### 3. 正在输入
+
+停顿期间向平台发送「正在输入」状态，让这段等待**看得见**。
+
+- 走 OneBot v11 的扩展动作 `set_input_status`，需要协议端实现（[NapCat](https://github.com/NapNeko/NapCatQQ) 已实现）。
+- **只支持私聊**——这是协议端本身的限制，群聊不会发送输入状态。
+- 停顿短于 `min_seconds` 时不发，避免状态闪一下就消失。
+- 平台不支持时**静默跳过**，不影响回复本身。
 
 ## 安装
 
@@ -57,19 +68,34 @@ git clone https://github.com/sijin14514-sys/astrbot_plugin_humanlike_pace
 | | `per_char_seconds` | `0.05` | 正文每多一个字增加的停顿 |
 | | `jitter_seconds` | `0.8` | 在 0 到这个值之间随机追加 |
 | | `max_seconds` | `6.0` | 停顿上限 |
+| `typing` | `enable` | `true` | 开关正在输入状态 |
+| | `min_seconds` | `0.6` | 停顿短于该值时不发送输入状态 |
+
+全部参数可在 AstrBot WebUI 插件设置页调整。
+
+## 平台支持
+
+| 功能 | 适用范围 |
+| --- | --- |
+| 已读不回 | 所有平台 |
+| 打字延迟 | 所有平台 |
+| 正在输入 | 实现了 OneBot v11 `set_input_status` 的协议端，且仅私聊 |
+
+前两项不依赖任何平台特性。第三项会先检查事件是否来自私聊、是否持有可调用动作的客户端对象，任一条件不满足就直接返回，不会抛错。
 
 ## 为什么有这个插件
 
-写它是因为现有的同类插件在新的 AstrBot 上已经跑不起来了。
+写它是因为现有的同类插件在新版 AstrBot 上已经跑不起来了。
 
-[`astrbot_plugin_humanlike`](https://github.com/anka-afk/astrbot_plugin_humanlike) 做的正是这两件事，思路很好，但最后一次提交停在 2025 年 3 月。它用的 `filter.EventMessageType.ALL` 在 AstrBot 4.24 之后已经不存在了（现在只有 `GROUP_MESSAGE` / `PRIVATE_MESSAGE` / `OTHER_MESSAGE`），安装后会直接加载失败。
+[`astrbot_plugin_humanlike`](https://github.com/anka-afk/astrbot_plugin_humanlike) 做的正是前两件事，思路很好，但最后一次提交停在 2025 年 3 月。它用的 `filter.EventMessageType.ALL` 在 AstrBot 4.24 之后已经不存在了（现在只有 `GROUP_MESSAGE` / `PRIVATE_MESSAGE` / `OTHER_MESSAGE`），安装后会直接加载失败。
 
-另外几个同类插件要么偏群聊唤醒逻辑，要么体量过大。所以重写了一个只做这两件事、在新版本上验证过的版本。
+另外几个同类插件要么偏群聊唤醒逻辑，要么体量过大。所以重写了一个只做这几件事、在新版本上验证过的版本。
 
 ## 实现说明
 
 - **已读不回**用 `event.stop_event()` 终止事件传播，处理器优先级设为 `100`（越大越先执行），确保在调用模型之前就结束。
 - **打字延迟**挂在 `on_decorating_result` 上，优先级 `-100`，排在其它改写消息链的插件之后，这样统计到的是最终正文长度。
+- **正在输入**通过事件对象上的 `bot.call_action()` 调用协议端动作。AstrBot 的 `event.send_typing()` 目前是空实现，所以这里直接走动作调用；调用被包在 `try` 里，协议端没实现时只记一次日志。
 - 统计长度时会剔除 `&&分类&&` 形式的标记（[表情包管理器](https://github.com/anka-afk/astrbot_plugin_meme_manager) 用它来发表情包），避免标记被算进字数。
 - 停顿用 `asyncio.sleep`，不阻塞事件循环。多会话并发时互不影响。
 
@@ -78,7 +104,10 @@ git clone https://github.com/sijin14514-sys/astrbot_plugin_humanlike_pace
 **为什么带文字的图片消息不会触发已读不回？**
 因为那种消息通常带实际内容，不理人容易显得莫名其妙。只对"纯发表情包"这种低信息量消息生效，更接近真人习惯。
 
-**为什么设了上限？**
+**群聊里为什么看不到"正在输入"？**
+不是插件刻意限制，而是协议端的 `set_input_status` 本身只实现了私聊（C2C）。群聊要显示输入状态需要协议端支持，目前 NapCat 没有。
+
+**为什么设了延迟上限？**
 正常聊天不会出现需要停 20 秒的情况，上限是为了防止异常长的正文（比如误触发了长回复）把消息卡住。
 
 **和表情包插件冲突吗？**
